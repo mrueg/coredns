@@ -2,6 +2,7 @@ package object
 
 import (
 	"fmt"
+	"strings"
 
 	discovery "k8s.io/api/discovery/v1"
 	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,6 +35,7 @@ type EndpointAddress struct {
 	Hostname      string
 	NodeName      string
 	TargetRefName string
+	IPHostname    string
 }
 
 // EndpointPort is a tuple that describes a single port.
@@ -88,7 +90,7 @@ func EndpointSliceToEndpoints(obj meta.Object) (meta.Object, error) {
 			continue
 		}
 		for _, a := range end.Addresses {
-			ea := EndpointAddress{IP: a}
+			ea := EndpointAddress{IP: a, IPHostname: FormatIPHostname(a)}
 			if end.Hostname != nil {
 				ea.Hostname = *end.Hostname
 			}
@@ -107,6 +109,18 @@ func EndpointSliceToEndpoints(obj meta.Object) (meta.Object, error) {
 	*ends = discovery.EndpointSlice{}
 
 	return e, nil
+}
+
+// FormatIPHostname converts an IP address string to its default DNS label format (dashes instead of dots/colons).
+func FormatIPHostname(ip string) string {
+	if strings.Contains(ip, ":") {
+		ipv6Hostname := strings.ReplaceAll(ip, ":", "-")
+		if strings.HasSuffix(ipv6Hostname, "-") {
+			return ipv6Hostname + "0"
+		}
+		return ipv6Hostname
+	}
+	return strings.ReplaceAll(ip, ".", "-")
 }
 
 func endpointsliceReady(ready *bool) bool {
@@ -151,7 +165,7 @@ func (e *Endpoints) DeepCopyObject() runtime.Object {
 			Ports:     make([]EndpointPort, len(eps.Ports)),
 		}
 		for j, a := range eps.Addresses {
-			ea := EndpointAddress{IP: a.IP, Hostname: a.Hostname, NodeName: a.NodeName, TargetRefName: a.TargetRefName}
+			ea := EndpointAddress{IP: a.IP, Hostname: a.Hostname, NodeName: a.NodeName, TargetRefName: a.TargetRefName, IPHostname: a.IPHostname}
 			sub.Addresses[j] = ea
 		}
 		for k, p := range eps.Ports {

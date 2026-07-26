@@ -369,17 +369,10 @@ func endpointHostname(addr object.EndpointAddress, endpointNameMode bool) string
 	if endpointNameMode && addr.TargetRefName != "" {
 		return addr.TargetRefName
 	}
-	if strings.Contains(addr.IP, ".") {
-		return strings.ReplaceAll(addr.IP, ".", "-")
+	if addr.IPHostname != "" {
+		return addr.IPHostname
 	}
-	if strings.Contains(addr.IP, ":") {
-		ipv6Hostname := strings.ReplaceAll(addr.IP, ":", "-")
-		if strings.HasSuffix(ipv6Hostname, "-") {
-			return ipv6Hostname + "0"
-		}
-		return ipv6Hostname
-	}
-	return ""
+	return object.FormatIPHostname(addr.IP)
 }
 
 func (k *Kubernetes) findPods(r recordRequest, zone string) (pods []msg.Service, err error) {
