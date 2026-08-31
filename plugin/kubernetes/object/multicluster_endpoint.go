@@ -18,10 +18,20 @@ type MultiClusterEndpoints struct {
 // MultiClusterEndpointsKey returns a string using for the index.
 func MultiClusterEndpointsKey(name, namespace string) string { return name + "." + namespace }
 
-// EndpointSliceToMultiClusterEndpoints converts a *discovery.EndpointSlice to a *Endpoints.
-func EndpointSliceToMultiClusterEndpoints(obj meta.Object) (meta.Object, error) {
+// MultiClusterEndpointSliceTransform returns the ToFunc that converts a
+// *discovery.EndpointSlice to a *MultiClusterEndpoints under opts. Zones are
+// never retained: zone-scoped names are not defined inside multicluster zones,
+// so nothing would read them.
+func MultiClusterEndpointSliceTransform(opts EndpointSliceOpts) ToFunc {
+	opts.WithZones = false
+	return func(obj meta.Object) (meta.Object, error) {
+		return endpointSliceToMultiClusterEndpoints(obj, opts)
+	}
+}
+
+func endpointSliceToMultiClusterEndpoints(obj meta.Object, opts EndpointSliceOpts) (meta.Object, error) {
 	labels := maps.Clone(obj.GetLabels())
-	ends, err := EndpointSliceToEndpoints(obj)
+	ends, err := endpointSliceToEndpoints(obj, opts)
 	if err != nil {
 		return nil, err
 	}

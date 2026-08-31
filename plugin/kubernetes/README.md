@@ -47,6 +47,7 @@ kubernetes [ZONES...] {
     ignore empty_service
     multicluster [ZONES...]
     zonal
+    terminating_endpoints
     startup_timeout DURATION
 }
 ```
@@ -123,6 +124,10 @@ kubernetes [ZONES...] {
   Names section below). It also publishes the `kubernetes/zone` metadata
   label (the requested topology zone, empty for non-zonal queries) when the
   *metadata* plugin is enabled.
+* `terminating_endpoints` keeps an endpoint in DNS while its pod is shutting
+  down, for as long as the cluster still reports it as serving (see the
+  Terminating Endpoints section below). Requires the endpoint cache, so it
+  cannot be combined with `noendpoints`.
 * `startup_timeout` specifies the **DURATION** value that limits the time to wait for informer cache synced
   when the kubernetes plugin starts. If not specified, the default timeout will be 5s.
 
@@ -209,6 +214,37 @@ Service before pointing clients at `_zone` names — replicas without the
 option answer NXDOMAIN for them, which clients negative-cache per name for
 the SOA minttl (this follows the `ttl` option). Zonal names are answered
 at query time only; they are not included in zone transfers.
+
+## Terminating Endpoints
+
+By default an endpoint is published only while the cluster reports it as
+*ready*. An EndpointSlice carries three conditions, and the API requires `ready`
+to be false for an endpoint that is terminating - unless the Service overrides
+readiness with `publishNotReadyAddresses`. A pod therefore leaves DNS the moment
+it starts shutting down, and a client resolving the name cannot tell it from a
+pod that is already gone.
+
+That is the right default for a ClusterIP service, where kube-proxy owns the
+decision. It is not always right for a headless service, whose clients pick
+their own backend from the answer and may want to keep talking to a pod for the
+length of its graceful shutdown - the same reason kube-proxy grew
+`ProxyTerminatingEndpoints`.
+
+`terminating_endpoints` filters on the `serving` condition instead. `serving` is
+defined as identical to `ready` except that it is set regardless of the
+terminating state, so:
+
+* a ready endpoint is published, exactly as before;
+* an endpoint that is shutting down but still answering (`serving` true,
+  `ready` false, `terminating` true) is published, where today it is dropped;
+* an endpoint that has stopped serving is not published, terminating or not.
+
+The option changes which endpoints reach the cache, so it applies to every
+record built from endpoints: headless A/AAAA and SRV answers, per-endpoint
+names, PTR records, and the multicluster equivalents. It does not change the
+records themselves, and it does not distinguish a terminating endpoint from a
+ready one in the answer - a client that needs to tell them apart should be
+reading pod state, not DNS.
 
 ## Startup
 

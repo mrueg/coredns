@@ -885,3 +885,70 @@ func TestKubernetesParseZonal(t *testing.T) {
 		}
 	}
 }
+
+func TestKubernetesParseTerminatingEndpoints(t *testing.T) {
+	tests := []struct {
+		input       string
+		shouldErr   bool
+		expectedOpt bool
+	}{
+		{
+			`kubernetes coredns.local {
+	terminating_endpoints
+}`,
+			false,
+			true,
+		},
+		{
+			`kubernetes coredns.local {
+	terminating_endpoints true
+}`,
+			true,
+			false,
+		},
+		{
+			// The option only decides which endpoints reach the cache, so
+			// it cannot do anything without one.
+			`kubernetes coredns.local {
+	terminating_endpoints
+	noendpoints
+}`,
+			true,
+			false,
+		},
+		{
+			// Composes with zonal, which also needs the endpoint cache.
+			`kubernetes coredns.local {
+	terminating_endpoints
+	zonal
+}`,
+			false,
+			true,
+		},
+		{
+			`kubernetes coredns.local {
+}`,
+			false,
+			false,
+		},
+	}
+
+	for i, test := range tests {
+		c := caddy.NewTestController("dns", test.input)
+		k8sController, err := kubernetesParse(c)
+
+		if test.shouldErr {
+			if err == nil {
+				t.Errorf("Test %d: Expected error, got none for input '%s'", i, test.input)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("Test %d: Expected no error, got '%v' for input '%s'", i, err, test.input)
+			continue
+		}
+		if k8sController.opts.terminatingEndpoints != test.expectedOpt {
+			t.Errorf("Test %d: Expected terminatingEndpoints=%v, got %v", i, test.expectedOpt, k8sController.opts.terminatingEndpoints)
+		}
+	}
+}

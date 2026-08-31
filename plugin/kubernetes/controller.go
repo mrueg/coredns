@@ -119,6 +119,9 @@ type dnsControlOpts struct {
 	// (topozone.pin|prefer._zone.service.namespace.svc.zone) for headless
 	// services.
 	zonal bool
+	// terminatingEndpoints keeps an endpoint in DNS while it is shutting
+	// down, for as long as it is still serving.
+	terminatingEndpoints bool
 
 	// Label handling.
 	labelSelector          *meta.LabelSelector
@@ -176,9 +179,9 @@ func newdnsController(ctx context.Context, kubeClient kubernetes.Interface, mcsC
 		dns.podController = podController
 	}
 
-	epTransform := object.EndpointSliceToEndpoints
-	if opts.zonal {
-		epTransform = object.EndpointSliceToEndpointsWithZones
+	epOpts := object.EndpointSliceOpts{
+		WithZones:          opts.zonal,
+		IncludeTerminating: opts.terminatingEndpoints,
 	}
 	epLister, epController := object.NewIndexerInformer(
 		cache.ToListWatcherWithWatchListSemantics(
@@ -191,7 +194,7 @@ func newdnsController(ctx context.Context, kubeClient kubernetes.Interface, mcsC
 		&discovery.EndpointSlice{},
 		cache.ResourceEventHandlerFuncs{AddFunc: dns.Add, UpdateFunc: dns.Update, DeleteFunc: dns.Delete},
 		cache.Indexers{epNameNamespaceIndex: epNameNamespaceIndexFunc, epIPIndex: epIPIndexFunc},
-		object.DefaultProcessor(epTransform, dns.EndpointSliceLatencyRecorder()),
+		object.DefaultProcessor(object.EndpointSliceTransform(epOpts), dns.EndpointSliceLatencyRecorder()),
 	)
 	dns.epLister = epLister
 	if opts.initEndpointsCache {
@@ -230,7 +233,7 @@ func newdnsController(ctx context.Context, kubeClient kubernetes.Interface, mcsC
 			&discovery.EndpointSlice{},
 			cache.ResourceEventHandlerFuncs{AddFunc: dns.Add, UpdateFunc: dns.Update, DeleteFunc: dns.Delete},
 			cache.Indexers{mcEpNameNamespaceIndex: mcEpNameNamespaceIndexFunc},
-			object.DefaultProcessor(object.EndpointSliceToMultiClusterEndpoints, dns.EndpointSliceLatencyRecorder()),
+			object.DefaultProcessor(object.MultiClusterEndpointSliceTransform(epOpts), dns.EndpointSliceLatencyRecorder()),
 		)
 		dns.svcImportLister, dns.svcImportController = object.NewIndexerInformer(
 			cache.ToListWatcherWithWatchListSemantics(

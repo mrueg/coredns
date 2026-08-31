@@ -212,6 +212,11 @@ func ParseStanza(c *caddy.Controller) (*Kubernetes, error) {
 				return nil, c.ArgErr()
 			}
 			k8s.opts.zonal = true
+		case "terminating_endpoints":
+			if len(c.RemainingArgs()) != 0 {
+				return nil, c.ArgErr()
+			}
+			k8s.opts.terminatingEndpoints = true
 		case "ignore":
 			args := c.RemainingArgs()
 			if len(args) > 0 {
@@ -300,6 +305,12 @@ func ParseStanza(c *caddy.Controller) (*Kubernetes, error) {
 		if !slices.Contains(k8s.Zones, multiclusterZone) {
 			return nil, c.Errf("is not authoritative for the multicluster zone %s (authoritative zones: %v)", multiclusterZone, k8s.Zones)
 		}
+	}
+
+	if k8s.opts.terminatingEndpoints && !k8s.opts.initEndpointsCache {
+		// The option only decides which endpoints reach the cache, so with
+		// no endpoint cache to reach it silently does nothing.
+		return nil, c.Errf("terminating_endpoints requires the endpoint cache; remove noendpoints")
 	}
 
 	if k8s.opts.zonal && !k8s.opts.initEndpointsCache {

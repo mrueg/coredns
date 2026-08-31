@@ -54,20 +54,28 @@ type EndpointPort struct {
 // EndpointsKey returns a string using for the index.
 func EndpointsKey(name, namespace string) string { return name + "." + namespace }
 
-// EndpointSliceToEndpoints converts a *discovery.EndpointSlice to a *Endpoints.
-func EndpointSliceToEndpoints(obj meta.Object) (meta.Object, error) {
-	return endpointSliceToEndpoints(obj, false /* withZones */)
+// EndpointSliceOpts selects what the EndpointSlice transforms keep. The zero
+// value is what the plugin has always done: topology zones are dropped, and an
+// endpoint is published only while the cluster reports it ready.
+type EndpointSliceOpts struct {
+	// WithZones retains each endpoint's topology zone. Set by the kubernetes
+	// plugin's zonal option, so a default configuration's cache stays exactly
+	// as slim as before.
+	WithZones bool
+	// IncludeTerminating publishes an endpoint that is still serving while it
+	// terminates. Set by the kubernetes plugin's terminating_endpoints option.
+	IncludeTerminating bool
 }
 
-// EndpointSliceToEndpointsWithZones is EndpointSliceToEndpoints, but also
-// retains each endpoint's topology zone. Used only when the kubernetes
-// plugin's zonal option is enabled, so the default configuration's cache
-// stays exactly as slim as before.
-func EndpointSliceToEndpointsWithZones(obj meta.Object) (meta.Object, error) {
-	return endpointSliceToEndpoints(obj, true /* withZones */)
+// EndpointSliceTransform returns the ToFunc that converts a
+// *discovery.EndpointSlice to a *Endpoints under opts.
+func EndpointSliceTransform(opts EndpointSliceOpts) ToFunc {
+	return func(obj meta.Object) (meta.Object, error) {
+		return endpointSliceToEndpoints(obj, opts)
+	}
 }
 
-func endpointSliceToEndpoints(obj meta.Object, withZones bool) (meta.Object, error) {
+func endpointSliceToEndpoints(obj meta.Object, opts EndpointSliceOpts) (meta.Object, error) {
 	ends, ok := obj.(*discovery.EndpointSlice)
 	if !ok {
 		return nil, fmt.Errorf("unexpected object %v", obj)
@@ -104,7 +112,7 @@ func endpointSliceToEndpoints(obj meta.Object, withZones bool) (meta.Object, err
 	}
 
 	for _, end := range ends.Endpoints {
-		if !endpointsliceReady(end.Conditions.Ready) {
+		if !endpointslicePublish(end.Conditions, opts.IncludeTerminating) {
 			continue
 		}
 		for _, a := range end.Addresses {
@@ -112,7 +120,7 @@ func endpointSliceToEndpoints(obj meta.Object, withZones bool) (meta.Object, err
 			if end.Hostname != nil {
 				ea.Hostname = *end.Hostname
 			}
-			if withZones && end.Zone != nil {
+			if opts.WithZones && end.Zone != nil {
 				if e.Zones == nil {
 					e.Zones = make(map[string]string)
 				}
@@ -137,6 +145,28 @@ func endpointSliceToEndpoints(obj meta.Object, withZones bool) (meta.Object, err
 	return e, nil
 }
 
+// endpointslicePublish reports whether an endpoint with these conditions
+// belongs in DNS.
+//
+// Ready is what the plugin has always filtered on. The API requires it to be
+// false for a terminating endpoint - except where the Service overrides
+// readiness with publishNotReadyAddresses - so filtering on it alone drops a
+// pod for the whole of its graceful shutdown, and a client holding the name
+// cannot tell that endpoint from one that is gone.
+//
+// Serving is defined as identical to Ready except that it is set regardless of
+// the terminating state, which makes it exactly the condition to filter on when
+// terminating endpoints are wanted: an endpoint that is shutting down but still
+// answering has Serving true and Ready false, and one that has stopped serving
+// has both false. Terminating itself is never read, because it cannot change
+// the outcome for any combination the API can produce.
+func endpointslicePublish(c discovery.EndpointConditions, includeTerminating bool) bool {
+	if includeTerminating {
+		return endpointsliceServing(c)
+	}
+	return endpointsliceReady(c.Ready)
+}
+
 func endpointsliceReady(ready *bool) bool {
 	// Per API docs: a nil value indicates an unknown state. In most cases consumers
 	// should interpret this unknown state as ready.
@@ -144,6 +174,15 @@ func endpointsliceReady(ready *bool) bool {
 		return true
 	}
 	return *ready
+}
+
+func endpointsliceServing(c discovery.EndpointConditions) bool {
+	// Per API docs: a nil serving means the condition is not reported, and
+	// consumers should defer to ready.
+	if c.Serving == nil {
+		return endpointsliceReady(c.Ready)
+	}
+	return *c.Serving
 }
 
 // CopyWithoutSubsets copies e, without the subsets.
